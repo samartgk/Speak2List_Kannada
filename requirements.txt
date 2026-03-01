@@ -1,12 +1,9 @@
 streamlit
 streamlit-mic-recorder
-pydub
+soundfile
 numpy
 torch
 transformers
 accelerate
 sentencepiece
 om-transliterator
-torch
-torchvision
-torchaudio
