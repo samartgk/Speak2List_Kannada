@@ -1,3 +1,4 @@
+# streamlit_app.py
 import io
 import re
 import wave
@@ -6,15 +7,43 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import streamlit as st
-from om_transliterator import Transliterator  # Kannada -> Latin transliteration [web:218]
+from om_transliterator import Transliterator  # Kannada -> Latin transliteration
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
 from speak2list_mic import speak2list_mic
 
+# ----------------------------
+# Page
+# ----------------------------
 st.set_page_config(page_title="speak2list_kannada", layout="centered")
 st.title("speak2list_kannada")
 st.caption("Android Chrome • Record Kannada voice • Preview • Generate & download list")
 
+
+# ----------------------------
+# State (robust init)
+# ----------------------------
+def init_state():
+    st.session_state.setdefault("wav_clips_16k", [])      # List[np.ndarray]
+    st.session_state.setdefault("transcript_kn", "")      # str
+    st.session_state.setdefault("shopping_items", [])     # List[Tuple[str, Optional[str]]]
+    st.session_state.setdefault("list_text", "")          # str
+    st.session_state.setdefault("last_lang", "Kannada")   # str
+
+init_state()
+
+
+def reset_all():
+    st.session_state["wav_clips_16k"] = []
+    st.session_state["transcript_kn"] = ""
+    st.session_state["shopping_items"] = []
+    st.session_state["list_text"] = ""
+    st.session_state["last_lang"] = "Kannada"
+
+
+# ----------------------------
+# Models
+# ----------------------------
 MODEL_ID = "vasista22/whisper-kannada-medium"
 
 @st.cache_resource
@@ -30,36 +59,12 @@ def load_transliterator():
 processor, model = load_asr(MODEL_ID)
 transliterator = load_transliterator()
 
-# ----------------------------
-# Session state
-# ----------------------------
-if "wav_clips_16k" not in st.session_state:
-    st.session_state.wav_clips_16k: List[np.ndarray] = []
-
-if "transcript_kn" not in st.session_state:
-    st.session_state.transcript_kn = ""
-
-if "shopping_items" not in st.session_state:
-    st.session_state.shopping_items: List[Tuple[str, Optional[str]]] = []
-
-if "list_text" not in st.session_state:
-    st.session_state.list_text = ""
-
-if "last_lang" not in st.session_state:
-    st.session_state.last_lang = "Kannada"
-
-def reset_all():
-    st.session_state.wav_clips_16k = []
-    st.session_state.transcript_kn = ""
-    st.session_state.shopping_items = []
-    st.session_state.list_text = ""
-    st.session_state.last_lang = "Kannada"
 
 # ----------------------------
 # Audio helpers
 # ----------------------------
 def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
-    # Python's wave module reads PCM WAV. [web:269]
+    # Python's wave module reads PCM WAV.
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         nchan = wf.getnchannels()
         sampwidth = wf.getsampwidth()
@@ -69,8 +74,8 @@ def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
 
     if sampwidth != 2:
         raise ValueError(f"Expected PCM16 WAV (sampwidth=2), got sampwidth={sampwidth}")
-    x = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
 
+    x = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
     if nchan > 1:
         x = x.reshape(-1, nchan).mean(axis=1).astype(np.float32)
 
@@ -134,8 +139,9 @@ def simple_vad_keep_speech(x: np.ndarray, sr: int = 16000) -> np.ndarray:
 
     return np.concatenate([x[s:e] for s, e in merged]).astype(np.float32)
 
+
 # ----------------------------
-# NLP helpers
+# Text helpers
 # ----------------------------
 def transcribe_kn(wav16: np.ndarray) -> str:
     if wav16 is None or len(wav16) < 1600:
@@ -169,31 +175,34 @@ def format_list(items: List[Tuple[str, Optional[str]]], out_lang: str) -> str:
     for item, qty in items:
         item_out = item
         if out_lang == "English (transliteration)":
-            item_out = transliterator.knda_to_latn(item_out)  # Kannada -> Latin [web:218]
+            item_out = transliterator.knda_to_latn(item_out)
         lines.append(f"{item_out} - {qty}" if qty else f"{item_out}")
     return "\n".join(lines).strip()
 
 def build_txt_bytes(out_lang: str) -> bytes:
-    if not st.session_state.wav_clips_16k:
-        st.session_state.transcript_kn = ""
-        st.session_state.shopping_items = []
-        st.session_state.list_text = ""
-        st.session_state.last_lang = out_lang
+    init_state()  # ensure keys exist even inside download callable
+
+    if not st.session_state["wav_clips_16k"]:
+        st.session_state["transcript_kn"] = ""
+        st.session_state["shopping_items"] = []
+        st.session_state["list_text"] = ""
+        st.session_state["last_lang"] = out_lang
         return b""
 
-    wav16 = np.concatenate(st.session_state.wav_clips_16k).astype(np.float32)
+    wav16 = np.concatenate(st.session_state["wav_clips_16k"]).astype(np.float32)
     wav16_speech = simple_vad_keep_speech(wav16, sr=16000)
 
     transcript_kn = transcribe_kn(wav16_speech)
     shopping_items = extract_items(transcript_kn)
     list_text = format_list(shopping_items, out_lang)
 
-    st.session_state.transcript_kn = transcript_kn
-    st.session_state.shopping_items = shopping_items
-    st.session_state.list_text = list_text
-    st.session_state.last_lang = out_lang
+    st.session_state["transcript_kn"] = transcript_kn
+    st.session_state["shopping_items"] = shopping_items
+    st.session_state["list_text"] = list_text
+    st.session_state["last_lang"] = out_lang
 
     return (list_text + "\n").encode("utf-8")
+
 
 # ----------------------------
 # UI
@@ -203,7 +212,7 @@ with c1:
     out_lang = st.selectbox(
         "Download language",
         ["Kannada", "English (transliteration)"],
-        index=0 if st.session_state.last_lang == "Kannada" else 1,
+        index=0 if st.session_state["last_lang"] == "Kannada" else 1,
     )
 with c2:
     st.write("")
@@ -212,7 +221,6 @@ with c2:
 
 st.subheader("Record")
 payload = speak2list_mic(key="mic")
-st.write("mic payload:", payload)
 
 if payload and payload.get("status") == "error":
     st.error(payload.get("error", "Microphone error"))
@@ -221,8 +229,9 @@ elif payload and payload.get("status") == "stopped" and payload.get("wav_bytes")
     try:
         x, sr = read_pcm16_mono_from_wav_bytes(wav_bytes)
         x16 = resample_to_16k(x, sr)
-        st.session_state.wav_clips_16k.append(x16)
-        total_s = sum(len(c) for c in st.session_state.wav_clips_16k) / 16000.0
+        st.session_state["wav_clips_16k"].append(x16)
+
+        total_s = sum(len(c) for c in st.session_state["wav_clips_16k"]) / 16000.0
         st.success(f"Clip added. Total recorded: ~{total_s:.1f}s")
     except Exception as e:
         st.error(f"Could not decode WAV: {e}")
@@ -230,8 +239,8 @@ elif payload and payload.get("status") == "stopped" and payload.get("wav_bytes")
 st.divider()
 
 st.subheader("Preview")
-st.text_area("Transcript (Kannada)", value=st.session_state.transcript_kn, height=120)
-st.code(st.session_state.list_text or "(No items yet)", language="text")
+st.text_area("Transcript (Kannada)", value=st.session_state["transcript_kn"], height=120)
+st.code(st.session_state["list_text"] or "(No items yet)", language="text")
 
 st.subheader("Generate & download")
 date_tag = datetime.now().strftime("%Y-%m-%d")
@@ -239,7 +248,7 @@ fname = f"speak2list_kannada_{date_tag}.txt"
 
 st.download_button(
     label="Generate & Download",
-    data=lambda: build_txt_bytes(out_lang),  # generate only on click [web:78]
+    data=lambda: build_txt_bytes(out_lang),
     file_name=fname,
     mime="text/plain",
     use_container_width=True,
