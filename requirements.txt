@@ -1,6 +1,4 @@
 streamlit
-streamlit-mic-recorder
-soundfile
 numpy
 torch
 transformers
