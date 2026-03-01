@@ -60,7 +60,6 @@ transliterator = load_transliterator()
 # Audio helpers
 # ----------------------------
 def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
-    # Reads PCM WAV via Python wave module.
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         nchan = wf.getnchannels()
         sampwidth = wf.getsampwidth()
@@ -74,6 +73,7 @@ def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
     x = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
     if nchan > 1:
         x = x.reshape(-1, nchan).mean(axis=1).astype(np.float32)
+
     return x, int(sr)
 
 def resample_to_16k(x: np.ndarray, sr: int) -> np.ndarray:
@@ -145,12 +145,26 @@ def transcribe_kn(wav16: np.ndarray) -> str:
     return processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
 
 def extract_items(transcript: str) -> List[Tuple[str, Optional[str]]]:
-    parts = re.split(r"[,\n]+", transcript)
+    t = (transcript or "").strip()
+    if not t:
+        return []
+
+    # Normalize common separator words into commas
+    # Requested: "ಮತ್ತೆ", "ಮತ್ತು", "next", "and", "ಮುಂದೆ"
+    t = t.replace("ಮತ್ತೆ", ",")
+    t = t.replace("ಮತ್ತು", ",")
+    t = t.replace("ಮುಂದೆ", ",")
+    t = re.sub(r"\b(next|and)\b", ",", t, flags=re.IGNORECASE)
+
+    # Split on many delimiters (commas, newlines, Kannada danda, semicolons, pipes)
+    parts = re.split(r"[,\n;|।]+", t)
+
     out: List[Tuple[str, Optional[str]]] = []
     for p in parts:
         p = p.strip()
         if not p:
             continue
+
         m = re.match(
             r"^(\d+(\.\d+)?\s*(kg|g|ಲೀ|ml|l|pcs|piece|pieces)?)\s+(.*)$",
             p,
@@ -162,6 +176,7 @@ def extract_items(transcript: str) -> List[Tuple[str, Optional[str]]]:
             out.append((item, qty))
         else:
             out.append((p, None))
+
     return out
 
 def format_list(items: List[Tuple[str, Optional[str]]], out_lang: str) -> str:
