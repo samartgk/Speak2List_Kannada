@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import streamlit as st
-from om_transliterator import Transliterator  # Kannada -> Latin transliteration
+from om_transliterator import Transliterator
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
 from speak2list_mic import speak2list_mic
@@ -18,7 +18,6 @@ from speak2list_mic import speak2list_mic
 st.set_page_config(page_title="speak2list_kannada", layout="centered")
 st.title("speak2list_kannada")
 st.caption("Android Chrome • Record Kannada voice • Preview • Generate & download list")
-
 
 # ----------------------------
 # State (robust init)
@@ -32,14 +31,12 @@ def init_state():
 
 init_state()
 
-
 def reset_all():
     st.session_state["wav_clips_16k"] = []
     st.session_state["transcript_kn"] = ""
     st.session_state["shopping_items"] = []
     st.session_state["list_text"] = ""
     st.session_state["last_lang"] = "Kannada"
-
 
 # ----------------------------
 # Models
@@ -59,12 +56,11 @@ def load_transliterator():
 processor, model = load_asr(MODEL_ID)
 transliterator = load_transliterator()
 
-
 # ----------------------------
 # Audio helpers
 # ----------------------------
 def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
-    # Python's wave module reads PCM WAV.
+    # Reads PCM WAV via Python wave module.
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         nchan = wf.getnchannels()
         sampwidth = wf.getsampwidth()
@@ -78,7 +74,6 @@ def read_pcm16_mono_from_wav_bytes(wav_bytes: bytes) -> Tuple[np.ndarray, int]:
     x = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
     if nchan > 1:
         x = x.reshape(-1, nchan).mean(axis=1).astype(np.float32)
-
     return x, int(sr)
 
 def resample_to_16k(x: np.ndarray, sr: int) -> np.ndarray:
@@ -139,7 +134,6 @@ def simple_vad_keep_speech(x: np.ndarray, sr: int = 16000) -> np.ndarray:
 
     return np.concatenate([x[s:e] for s, e in merged]).astype(np.float32)
 
-
 # ----------------------------
 # Text helpers
 # ----------------------------
@@ -179,46 +173,28 @@ def format_list(items: List[Tuple[str, Optional[str]]], out_lang: str) -> str:
         lines.append(f"{item_out} - {qty}" if qty else f"{item_out}")
     return "\n".join(lines).strip()
 
-def build_txt_bytes(out_lang: str) -> bytes:
-    init_state()  # ensure keys exist even inside download callable
-
-    if not st.session_state["wav_clips_16k"]:
-        st.session_state["transcript_kn"] = ""
-        st.session_state["shopping_items"] = []
-        st.session_state["list_text"] = ""
-        st.session_state["last_lang"] = out_lang
-        return b""
-
-    wav16 = np.concatenate(st.session_state["wav_clips_16k"]).astype(np.float32)
-    wav16_speech = simple_vad_keep_speech(wav16, sr=16000)
-
-    transcript_kn = transcribe_kn(wav16_speech)
-    shopping_items = extract_items(transcript_kn)
-    list_text = format_list(shopping_items, out_lang)
-
-    st.session_state["transcript_kn"] = transcript_kn
-    st.session_state["shopping_items"] = shopping_items
-    st.session_state["list_text"] = list_text
-    st.session_state["last_lang"] = out_lang
-
-    return (list_text + "\n").encode("utf-8")
-
-
 # ----------------------------
-# UI
+# Top controls
 # ----------------------------
-c1, c2 = st.columns([1.2, 1])
-with c1:
+top1, top2 = st.columns([1.2, 1])
+
+with top1:
     out_lang = st.selectbox(
         "Download language",
         ["Kannada", "English (transliteration)"],
         index=0 if st.session_state["last_lang"] == "Kannada" else 1,
     )
-with c2:
+
+with top2:
     st.write("")
     if st.button("Clear / start fresh", use_container_width=True):
         reset_all()
 
+st.divider()
+
+# ----------------------------
+# Record (React component)
+# ----------------------------
 st.subheader("Record")
 payload = speak2list_mic(key="mic")
 
@@ -238,19 +214,46 @@ elif payload and payload.get("status") == "stopped" and payload.get("wav_bytes")
 
 st.divider()
 
+# ----------------------------
+# Preview (before download)
+# ----------------------------
 st.subheader("Preview")
 st.text_area("Transcript (Kannada)", value=st.session_state["transcript_kn"], height=120)
 st.code(st.session_state["list_text"] or "(No items yet)", language="text")
 
+# ----------------------------
+# Generate & download (after preview)
+# ----------------------------
 st.subheader("Generate & download")
-date_tag = datetime.now().strftime("%Y-%m-%d")
-fname = f"speak2list_kannada_{date_tag}.txt"
+gen_col, dl_col = st.columns([1, 1])
 
-st.download_button(
-    label="Generate & Download",
-    data=lambda: build_txt_bytes(out_lang),
-    file_name=fname,
-    mime="text/plain",
-    use_container_width=True,
-    key="dl",
-)
+with gen_col:
+    if st.button("Generate list", use_container_width=True, key="gen"):
+        if not st.session_state["wav_clips_16k"]:
+            st.warning("No recording yet. Record a clip first.")
+        else:
+            wav16 = np.concatenate(st.session_state["wav_clips_16k"]).astype(np.float32)
+            wav16_speech = simple_vad_keep_speech(wav16, sr=16000)
+
+            transcript_kn = transcribe_kn(wav16_speech)
+            shopping_items = extract_items(transcript_kn)
+            list_text = format_list(shopping_items, out_lang)
+
+            st.session_state["transcript_kn"] = transcript_kn
+            st.session_state["shopping_items"] = shopping_items
+            st.session_state["list_text"] = list_text
+            st.session_state["last_lang"] = out_lang
+
+with dl_col:
+    date_tag = datetime.now().strftime("%Y-%m-%d")
+    fname = f"speak2list_kannada_{date_tag}.txt"
+
+    st.download_button(
+        label="Download",
+        data=(st.session_state["list_text"] + "\n").encode("utf-8"),
+        file_name=fname,
+        mime="text/plain",
+        use_container_width=True,
+        disabled=(st.session_state["list_text"].strip() == ""),
+        key="download",
+    )
