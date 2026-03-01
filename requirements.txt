@@ -1,1 +1,12 @@
 streamlit
+streamlit-mic-recorder
+pydub
+numpy
+torch
+transformers
+accelerate
+sentencepiece
+om-transliterator
+torch
+torchvision
+torchaudio
