@@ -59,8 +59,9 @@ export default function MicButton(_props: ComponentProps) {
   const recRef = useRef<RecorderState | null>(null);
 
   useEffect(() => {
-    Streamlit.setFrameHeight(170);
-  }, []);
+  Streamlit.setFrameHeight(170);
+  Streamlit.setComponentValue({ status: "ready" });
+}, []);
 
   const start = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

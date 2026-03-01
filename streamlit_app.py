@@ -212,6 +212,7 @@ with c2:
 
 st.subheader("Record")
 payload = speak2list_mic(key="mic")
+st.write("mic payload:", payload)
 
 if payload and payload.get("status") == "error":
     st.error(payload.get("error", "Microphone error"))
